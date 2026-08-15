@@ -2,7 +2,64 @@
 // app.js — logique de la galerie, des filtres et de la fiche détail
 // ============================================================
 
-let COLLECTION = WATCHES.map(w => JSON.parse(JSON.stringify(w)));
+// ---------- CONNEXION SUPABASE (catalogue partagé) ----------
+// Remplacez ces deux valeurs par celles de votre projet Supabase
+// (Settings → API dans le tableau de bord Supabase).
+const SUPABASE_URL = "https://fcddtvnywcmkzrqyzynb.supabase.co/rest/v1/";
+const SUPABASE_ANON_KEY = "sb_publishable_FFSA3AuxRhKh2fKyKS-lGQ_P5DV980L";
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let COLLECTION = [];
+
+async function loadCollectionFromSupabase(){
+  const { data, error } = await supabaseClient
+    .from("watches")
+    .select("data")
+    .order("added_at", { ascending: false });
+
+  if(error){
+    console.error("Erreur de chargement Supabase :", error);
+    // Repli local si la connexion échoue, pour ne pas bloquer l'affichage
+    COLLECTION = WATCHES.map(w => JSON.parse(JSON.stringify(w)));
+    return;
+  }
+
+  if(!data || !data.length){
+    // Table vide : on amorce la base avec les montres d'exemple
+    COLLECTION = WATCHES.map(w => JSON.parse(JSON.stringify(w)));
+    for(const w of COLLECTION){
+      await supabaseClient.from("watches").upsert({ id: w.id, data: w });
+    }
+  } else {
+    COLLECTION = data.map(row => row.data);
+  }
+}
+
+async function saveWatchToSupabase(w){
+  const { error } = await supabaseClient.from("watches").upsert({ id: w.id, data: w });
+  if(error) alert("Erreur d'enregistrement en ligne : " + error.message);
+}
+
+async function deleteWatchFromSupabase(id){
+  const { error } = await supabaseClient.from("watches").delete().eq("id", id);
+  if(error) alert("Erreur de suppression en ligne : " + error.message);
+}
+
+function refreshAllFiltersAndRender(){
+  syncPriceRange(); buildStatusFilters(); buildBrandFilters(); buildMovementFilters();
+  buildMaterialFilters(); buildBraceletFilters(); buildShapeFilters(); buildDialSwatches();
+  render();
+}
+
+function subscribeToRealtimeChanges(){
+  supabaseClient
+    .channel("watches-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: "watches" }, async () => {
+      await loadCollectionFromSupabase();
+      refreshAllFiltersAndRender();
+    })
+    .subscribe();
+}
 
 function slugify(brand, model){
   const base = `${brand}-${model}`.toLowerCase()
@@ -349,11 +406,11 @@ document.addEventListener("keydown", (e)=>{
 
 // ---------- SUPPRESSION ----------
 function deleteWatch(w){
-  const ok = confirm(`Supprimer « ${w.brand} — ${w.model} » de la collection ?\nCette action est définitive (pensez à exporter en JSON si vous voulez garder une trace).`);
+  const ok = confirm(`Supprimer « ${w.brand} — ${w.model} » de la collection ?\nCette action est définitive et sera visible par tous (pensez à exporter en JSON si vous voulez garder une trace).`);
   if(!ok) return;
   COLLECTION = COLLECTION.filter(x => x.id !== w.id);
-  syncPriceRange(); buildStatusFilters(); buildBrandFilters(); buildMovementFilters(); buildMaterialFilters(); buildBraceletFilters(); buildShapeFilters(); buildDialSwatches();
-  render();
+  deleteWatchFromSupabase(w.id);
+  refreshAllFiltersAndRender();
 }
 
 // ---------- FORMULAIRE AJOUT / MODIFICATION ----------
@@ -581,9 +638,9 @@ function openForm(existing = null){
     } else {
       COLLECTION.push(updated);
     }
-    syncPriceRange(); buildStatusFilters(); buildBrandFilters(); buildMovementFilters(); buildMaterialFilters(); buildBraceletFilters(); buildShapeFilters(); buildDialSwatches();
+    saveWatchToSupabase(updated);
+    refreshAllFiltersAndRender();
     closeModal();
-    render();
   });
 }
 document.getElementById("addWatchBtn").addEventListener("click", ()=> openForm());
@@ -612,8 +669,10 @@ document.getElementById("importInput").addEventListener("change", (e)=>{
         added_date: new Date().toISOString().slice(0,10),
         ...w
       }));
-      syncPriceRange(); buildStatusFilters(); buildBrandFilters(); buildMovementFilters(); buildMaterialFilters(); buildBraceletFilters(); buildShapeFilters(); buildDialSwatches();
-      render();
+      for(const w of COLLECTION){
+        saveWatchToSupabase(w);
+      }
+      refreshAllFiltersAndRender();
     }catch(err){
       alert("Le fichier importé n'est pas un JSON de collection valide.");
     }
@@ -710,13 +769,9 @@ themeBtn.addEventListener("click", ()=>{
 });
 
 // ---------- INIT ----------
-syncPriceRange();
-buildStatusFilters();
-buildBrandFilters();
-buildMovementFilters();
-buildMaterialFilters();
-buildBraceletFilters();
-buildShapeFilters();
-buildDialSwatches();
-setTheme(currentTheme);
-render();
+(async function init(){
+  setTheme(currentTheme);
+  await loadCollectionFromSupabase();
+  refreshAllFiltersAndRender();
+  subscribeToRealtimeChanges();
+})();
