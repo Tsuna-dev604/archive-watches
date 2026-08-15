@@ -241,6 +241,9 @@ function statusPillColor(status){
 function card(w){
   const div = document.createElement("div");
   div.className = "watch-card fade-in cursor-pointer border hairline rounded-lg overflow-hidden";
+  const priceText = w.price_estimate
+    ? (w.price_estimate.includes("€") ? w.price_estimate : `${w.price_estimate} €`)
+    : "";
   div.innerHTML = `
     <div class="cover aspect-square" style="background:var(--card)">
       <img src="${w.cover_image}" alt="${w.brand} ${w.model}" class="w-full h-full object-cover">
@@ -256,11 +259,11 @@ function card(w){
       </div>
     </div>
     <div class="p-3 md:p-4 flex items-end justify-between gap-2">
-      <div class="min-w-0">
+      <div class="min-w-0 flex-1">
         <p class="mono text-[10px] tracking-[0.18em] uppercase" style="color:var(--ink-dim)">${w.brand}</p>
-        <p class="serif text-lg md:text-xl italic leading-tight mt-0.5 truncate" style="color:var(--ink)">${w.model}</p>
+        <p class="serif text-lg md:text-xl italic leading-tight mt-0.5 line-clamp-2" style="color:var(--ink)">${w.model}</p>
       </div>
-      ${w.price_estimate ? `<p class="mono text-[11px] md:text-xs shrink-0 text-right" style="color:var(--gold)">${w.price_estimate}</p>` : ""}
+      ${priceText ? `<p class="serif text-lg md:text-xl italic shrink-0 text-right leading-tight" style="color:var(--gold)">${priceText}</p>` : ""}
     </div>
   `;
   div.style.position = "relative";
