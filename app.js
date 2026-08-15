@@ -61,6 +61,46 @@ function subscribeToRealtimeChanges(){
     .subscribe();
 }
 
+// ---------- PHOTOS : upload vers Supabase Storage ----------
+// Le bucket "watch-photos" doit exister (public) — voir script SQL fourni.
+const STORAGE_BUCKET = "watch-photos";
+
+function randomFileId(){
+  return (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+async function uploadImageToStorage(file){
+  if(!file) return null;
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+  const path = `${randomFileId()}.${ext}`;
+  const { error } = await supabaseClient
+    .storage.from(STORAGE_BUCKET)
+    .upload(path, file, { cacheControl: "3600", upsert: false, contentType: file.type });
+  if(error){
+    alert("Erreur d'envoi de la photo : " + error.message);
+    return null;
+  }
+  const { data } = supabaseClient.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
+// Extrait le chemin de fichier Storage à partir d'une URL publique,
+// pour pouvoir supprimer une photo remplacée ou une montre supprimée.
+function storagePathFromPublicUrl(url){
+  if(!url || typeof url !== "string") return null;
+  const marker = `/storage/v1/object/public/${STORAGE_BUCKET}/`;
+  const i = url.indexOf(marker);
+  return i === -1 ? null : url.slice(i + marker.length);
+}
+
+async function deleteStorageFile(url){
+  const path = storagePathFromPublicUrl(url);
+  if(!path) return; // pas une image Storage (ex: illustration SVG par défaut) → rien à faire
+  await supabaseClient.storage.from(STORAGE_BUCKET).remove([path]);
+}
+
 function slugify(brand, model){
   const base = `${brand}-${model}`.toLowerCase()
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -405,11 +445,14 @@ document.addEventListener("keydown", (e)=>{
 });
 
 // ---------- SUPPRESSION ----------
-function deleteWatch(w){
+async function deleteWatch(w){
   const ok = confirm(`Supprimer « ${w.brand} — ${w.model} » de la collection ?\nCette action est définitive et sera visible par tous (pensez à exporter en JSON si vous voulez garder une trace).`);
   if(!ok) return;
   COLLECTION = COLLECTION.filter(x => x.id !== w.id);
-  deleteWatchFromSupabase(w.id);
+  await deleteWatchFromSupabase(w.id);
+  // Nettoyage des photos associées dans Supabase Storage (évite d'accumuler des fichiers orphelins)
+  await deleteStorageFile(w.cover_image);
+  for(const img of (w.gallery_images || [])){ await deleteStorageFile(img); }
   refreshAllFiltersAndRender();
 }
 
@@ -538,15 +581,6 @@ function openForm(existing = null){
   document.body.style.overflow = "hidden";
   lucide.createIcons();
 
-  function fileToDataURL(file){
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
-
   function renderGalleryPreview(){
     const box = document.getElementById("galleryPreview");
     box.innerHTML = galleryDraft.map((src, i) => `
@@ -559,7 +593,8 @@ function openForm(existing = null){
     lucide.createIcons();
     box.querySelectorAll(".gallery-remove").forEach(btn => {
       btn.addEventListener("click", () => {
-        galleryDraft.splice(parseInt(btn.dataset.i), 1);
+        const [removed] = galleryDraft.splice(parseInt(btn.dataset.i), 1);
+        deleteStorageFile(removed);
         renderGalleryPreview();
       });
     });
@@ -578,14 +613,26 @@ function openForm(existing = null){
   document.getElementById("coverInput").addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if(!file) return;
-    coverDraft = await fileToDataURL(file);
-    document.getElementById("coverPreview").src = coverDraft;
+    const preview = document.getElementById("coverPreview");
+    const prevSrc = preview.src;
+    preview.style.opacity = "0.4";
+    const url = await uploadImageToStorage(file);
+    preview.style.opacity = "1";
+    if(url){
+      coverDraft = url;
+      preview.src = coverDraft;
+    } else {
+      preview.src = prevSrc; // échec d'upload : on garde l'ancienne photo affichée
+    }
   });
 
   document.getElementById("galleryInput").addEventListener("change", async (e) => {
     const files = Array.from(e.target.files);
-    const urls = await Promise.all(files.map(fileToDataURL));
-    galleryDraft.push(...urls);
+    const box = document.getElementById("galleryPreview");
+    box.style.opacity = "0.4";
+    const urls = await Promise.all(files.map(uploadImageToStorage));
+    box.style.opacity = "1";
+    galleryDraft.push(...urls.filter(Boolean));
     renderGalleryPreview();
     e.target.value = "";
   });
