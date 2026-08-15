@@ -5,7 +5,7 @@
 // ---------- CONNEXION SUPABASE (catalogue partagé) ----------
 // Remplacez ces deux valeurs par celles de votre projet Supabase
 // (Settings → API dans le tableau de bord Supabase).
-const SUPABASE_URL = "https://fcddtvnywcmkzrqyzynb.supabase.co/rest/v1/";
+const SUPABASE_URL = "https://fcddtvnywcmkzrqyzynb.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_FFSA3AuxRhKh2fKyKS-lGQ_P5DV980L";
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
