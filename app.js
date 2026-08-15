@@ -12,27 +12,38 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_
 let COLLECTION = [];
 
 async function loadCollectionFromSupabase(){
-  const { data, error } = await supabaseClient
-    .from("watches")
-    .select("data")
-    .order("added_at", { ascending: false });
+  const { data: idRows, error: idError } = await supabaseClient
+    .from("watches").select("id").order("added_at", { ascending: false });
 
-  if(error){
-    console.error("Erreur de chargement Supabase :", error);
+  if(idError){
+    console.error("Erreur de chargement Supabase :", idError);
     // Repli local si la connexion échoue, pour ne pas bloquer l'affichage
     COLLECTION = WATCHES.map(w => JSON.parse(JSON.stringify(w)));
     return;
   }
 
-  if(!data || !data.length){
+  if(!idRows || !idRows.length){
     // Table vide : on amorce la base avec les montres d'exemple
     COLLECTION = WATCHES.map(w => JSON.parse(JSON.stringify(w)));
     for(const w of COLLECTION){
       await supabaseClient.from("watches").upsert({ id: w.id, data: w });
     }
-  } else {
-    COLLECTION = data.map(row => row.data);
+    return;
   }
+
+  // On récupère chaque montre individuellement (plutôt qu'un seul gros select)
+  // pour éviter qu'une ligne très lourde en photos ne fasse échouer tout le chargement.
+  const loaded = [];
+  for(const { id } of idRows){
+    const { data: rowData, error: rowError } = await supabaseClient
+      .from("watches").select("data").eq("id", id).single();
+    if(rowError){
+      console.error(`Erreur de chargement de la montre "${id}" :`, rowError);
+      continue;
+    }
+    loaded.push(rowData.data);
+  }
+  COLLECTION = loaded;
 }
 
 async function saveWatchToSupabase(w){
@@ -244,9 +255,12 @@ function card(w){
         </button>
       </div>
     </div>
-    <div class="p-3 md:p-4">
-      <p class="mono text-[10px] tracking-[0.18em] uppercase" style="color:var(--ink-dim)">${w.brand}</p>
-      <p class="serif text-lg md:text-xl italic leading-tight mt-0.5" style="color:var(--ink)">${w.model}</p>
+    <div class="p-3 md:p-4 flex items-end justify-between gap-2">
+      <div class="min-w-0">
+        <p class="mono text-[10px] tracking-[0.18em] uppercase" style="color:var(--ink-dim)">${w.brand}</p>
+        <p class="serif text-lg md:text-xl italic leading-tight mt-0.5 truncate" style="color:var(--ink)">${w.model}</p>
+      </div>
+      ${w.price_estimate ? `<p class="mono text-[11px] md:text-xs shrink-0 text-right" style="color:var(--gold)">${w.price_estimate}</p>` : ""}
     </div>
   `;
   div.style.position = "relative";
