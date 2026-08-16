@@ -58,7 +58,7 @@ async function deleteWatchFromSupabase(id){
 
 function refreshAllFiltersAndRender(){
   syncPriceRange(); buildStatusFilters(); buildBrandFilters(); buildMovementFilters();
-  buildMaterialFilters(); buildBraceletFilters(); buildShapeFilters(); buildDialSwatches();
+  buildMaterialFilters(); buildBraceletFilters(); buildShapeFilters(); buildComplicationFilters(); buildDialSwatches();
   render();
 }
 
@@ -130,6 +130,7 @@ const state = {
   bracelet: new Set(),
   dial: new Set(),
   shape: new Set(),
+  complications: new Set(),
   diamMin: 30,
   diamMax: 46,
   priceMin: 0,
@@ -138,6 +139,14 @@ const state = {
 };
 
 const DIAL_HEX = { "Bleu":"#1B3A63", "Argenté":"#C7C4BC", "Noir":"#111214" };
+
+// Liste standard de complications proposées au filtrage/formulaire.
+// Un champ libre "Autre" complète cette liste dans le formulaire.
+const STANDARD_COMPLICATIONS = [
+  "Date", "Jour", "GMT / second fuseau", "Chronographe", "Réserve de marche",
+  "Phase de lune", "Petite seconde", "Alarme", "Répétition minutes",
+  "Tourbillon", "Quantième perpétuel", "Rattrapante", "Indicateur jour/nuit"
+];
 
 function parsePrice(str){
   if(!str) return 0;
@@ -200,6 +209,13 @@ function buildBraceletFilters(){
 function buildShapeFilters(){
   buildCheckbox(document.getElementById("shapeFilters"), COLLECTION.map(w=>w.specs.case_shape || "Rond"), "shape");
 }
+function buildComplicationFilters(){
+  // Union de la liste standard et de toutes les complications (y compris "autres" en texte libre)
+  // déjà présentes dans la collection, pour que les filtres personnalisés apparaissent aussi.
+  const usedInCollection = COLLECTION.flatMap(w => w.complications || []);
+  const options = unique([...STANDARD_COMPLICATIONS, ...usedInCollection]);
+  buildCheckbox(document.getElementById("complicationFilters"), options, "complications");
+}
 
 function matches(w){
   const q = state.search.trim().toLowerCase();
@@ -213,6 +229,11 @@ function matches(w){
   if(state.material.size && !state.material.has(w.specs.case_material)) return false;
   if(state.bracelet.size && !state.bracelet.has(w.specs.bracelet_material || "Non renseigné")) return false;
   if(state.shape.size && !state.shape.has(w.specs.case_shape || "Rond")) return false;
+  if(state.complications.size){
+    const wc = w.complications || [];
+    const hasAny = wc.some(c => state.complications.has(c));
+    if(!hasAny) return false;
+  }
   if(state.dial.size && !state.dial.has(w.specs.dial_color)) return false;
   if(w.specs.case_diameter < state.diamMin || w.specs.case_diameter > state.diamMax) return false;
   const price = parsePrice(w.price_estimate);
@@ -391,6 +412,13 @@ function openModal(w){
         ${specRow("Type", w.movement.type)}
         ${specRow("Réserve de marche", w.movement.power_reserve + " heures")}
         ${specRow("Fréquence", w.movement.frequency)}
+        ${w.movement.accuracy ? specRow("Variation de temps", w.movement.accuracy) : ""}
+
+        ${(w.complications && w.complications.length) ? `
+        <p class="mono text-[10px] uppercase tracking-[0.2em] mb-2 mt-6" style="color:var(--gold)">Complications</p>
+        <div class="flex flex-wrap gap-2">
+          ${w.complications.map(c => `<span class="mono text-[10px] uppercase tracking-widest px-2.5 py-1 rounded-full border hairline" style="color:var(--ink)">${c}</span>`).join("")}
+        </div>` : ""}
 
         <p class="mono text-[10px] uppercase tracking-[0.2em] mb-2 mt-6" style="color:var(--gold)">Historique &amp; notes personnelles</p>
         <p class="text-sm leading-relaxed" style="color:var(--ink)">${w.personal_notes}</p>
@@ -495,13 +523,15 @@ function openForm(existing = null){
     brand:"", model:"", reference:"", price_estimate:"", status:"Wishlist",
     production_status:"En production", production_years:"",
     specs:{ case_diameter:40, case_thickness:10, lug_to_lug:45, case_material:"Acier inoxydable", water_resistance:"100 m", dial_color:"Noir", crystal:"Saphir" },
-    movement:{ caliber:"", type:"Automatique", power_reserve:48, frequency:"28 800 alt/h" },
+    movement:{ caliber:"", type:"Automatique", power_reserve:48, frequency:"28 800 alt/h", accuracy:"" },
+    complications: [],
     cover_image: watchGlyph("#B08D57", "#E4CB9A"),
     gallery_images: [],
     personal_notes:""
   };
   let coverDraft = w.cover_image;
   let galleryDraft = [...(w.gallery_images || [])];
+  let complicationsDraft = [...(w.complications || [])];
 
   const overlay = document.getElementById("modalOverlay");
   const content = document.getElementById("modalContent");
@@ -581,6 +611,12 @@ function openForm(existing = null){
             ${formField("Réserve de marche (h)", "f-reserve", w.movement.power_reserve, "number")}
             ${formField("Fréquence", "f-freq", w.movement.frequency)}
           </div>
+          ${formField("Variation de temps (+/- sec/jour)", "f-accuracy", w.movement.accuracy || "")}
+        </div>
+        <div class="md:col-span-2 mb-2">
+          <p class="mono text-[10px] uppercase tracking-[0.2em] mb-3" style="color:var(--gold)">Complications</p>
+          <div id="complicationsCheckboxes" class="flex flex-wrap gap-x-5 gap-y-2 mb-3"></div>
+          ${formField("Autres complications (séparées par une virgule)", "f-complications-other", (w.complications || []).filter(c => !STANDARD_COMPLICATIONS.includes(c)).join(", "))}
         </div>
         <div class="md:col-span-2 flex gap-3 mt-2 pt-4 border-t hairline">
           <button type="submit" class="flex items-center gap-2 mono text-xs uppercase tracking-widest px-5 py-2.5 rounded-full" style="background:var(--gold); color:#0F1115">
@@ -617,6 +653,25 @@ function openForm(existing = null){
     });
   }
   renderGalleryPreview();
+
+  function renderComplicationsCheckboxes(){
+    const box = document.getElementById("complicationsCheckboxes");
+    box.innerHTML = STANDARD_COMPLICATIONS.map(c => {
+      const id = `comp-${c.replace(/\s+/g,'-')}`;
+      const checked = complicationsDraft.includes(c) ? "checked" : "";
+      return `<label class="chip flex items-center gap-2 text-sm" style="color:var(--ink)">
+        <input type="checkbox" class="comp-checkbox rounded" data-value="${c}" ${checked}> <span>${c}</span>
+      </label>`;
+    }).join("");
+    box.querySelectorAll(".comp-checkbox").forEach(cb => {
+      cb.addEventListener("change", (e) => {
+        const v = e.target.dataset.value;
+        if(e.target.checked){ if(!complicationsDraft.includes(v)) complicationsDraft.push(v); }
+        else { complicationsDraft = complicationsDraft.filter(x => x !== v); }
+      });
+    });
+  }
+  renderComplicationsCheckboxes();
 
   function toggleShapeFields(){
     const shape = document.getElementById("f-shape").value;
@@ -693,8 +748,13 @@ function openForm(existing = null){
         caliber: g("f-caliber"),
         type: g("f-movtype"),
         power_reserve: parseFloat(g("f-reserve")) || 0,
-        frequency: g("f-freq")
+        frequency: g("f-freq"),
+        accuracy: g("f-accuracy")
       },
+      complications: [...new Set([
+        ...complicationsDraft,
+        ...g("f-complications-other").split(",").map(s => s.trim()).filter(Boolean)
+      ])],
       personal_notes: document.getElementById("f-notes").value.trim()
     };
     if(existing){
@@ -797,13 +857,13 @@ priceMaxEl.addEventListener("input", updatePrice);
 // ---------- RESET ----------
 document.getElementById("resetFilters").addEventListener("click", ()=>{
   state.search=""; state.status.clear(); state.brand.clear(); state.movement.clear();
-  state.material.clear(); state.bracelet.clear(); state.dial.clear(); state.shape.clear();
+  state.material.clear(); state.bracelet.clear(); state.dial.clear(); state.shape.clear(); state.complications.clear();
   state.diamMin=30; state.diamMax=46; state.sort="added_desc";
   document.getElementById("searchInput").value = "";
   document.getElementById("searchInputMobile").value = "";
   document.getElementById("sortSelect").value = "added_desc";
   diamMinEl.value = 30; diamMaxEl.value = 46;
-  syncPriceRange(); buildStatusFilters(); buildBrandFilters(); buildMovementFilters(); buildMaterialFilters(); buildBraceletFilters(); buildShapeFilters(); buildDialSwatches();
+  syncPriceRange(); buildStatusFilters(); buildBrandFilters(); buildMovementFilters(); buildMaterialFilters(); buildBraceletFilters(); buildShapeFilters(); buildComplicationFilters(); buildDialSwatches();
   render();
 });
 
