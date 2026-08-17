@@ -212,8 +212,10 @@ function buildShapeFilters(){
 function buildComplicationFilters(){
   // Union de la liste standard et de toutes les complications (y compris "autres" en texte libre)
   // déjà présentes dans la collection, pour que les filtres personnalisés apparaissent aussi.
+  // "Aucune" est un filtre spécial (pas une vraie complication stockée sur une montre) : il permet
+  // d'isoler les pièces simples, sans complication renseignée.
   const usedInCollection = COLLECTION.flatMap(w => w.complications || []);
-  const options = unique([...STANDARD_COMPLICATIONS, ...usedInCollection]);
+  const options = unique([...STANDARD_COMPLICATIONS, ...usedInCollection, "Aucune"]);
   buildCheckbox(document.getElementById("complicationFilters"), options, "complications");
 }
 
@@ -232,7 +234,8 @@ function matches(w){
   if(state.complications.size){
     const wc = w.complications || [];
     const hasAny = wc.some(c => state.complications.has(c));
-    if(!hasAny) return false;
+    const matchesNone = state.complications.has("Aucune") && wc.length === 0;
+    if(!hasAny && !matchesNone) return false;
   }
   if(state.dial.size && !state.dial.has(w.specs.dial_color)) return false;
   if(w.specs.case_diameter < state.diamMin || w.specs.case_diameter > state.diamMax) return false;
